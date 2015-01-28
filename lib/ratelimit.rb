@@ -25,10 +25,6 @@ class Ratelimit
     if @bucket_expiry > @bucket_span
       raise ArgumentError.new("Bucket expiry cannot be larger than the bucket span")
     end
-    @bucket_count = (@bucket_span / @bucket_interval).round
-    if @bucket_count < 3
-      raise ArgumentError.new("Cannot have less than 3 buckets")
-    end
     @redis = options[:redis]
   end
 
@@ -39,12 +35,9 @@ class Ratelimit
   #
   # @return [Integer] The counter value
   def add(subject, count = 1)
-    bucket = get_bucket
-    subject = "#{@key}:#{subject}"
+    subject = "#{@key}:#{subject}:#{get_bucket}"
     redis.pipelined do
-      redis.hincrby(subject, bucket, count)
-      redis.hdel(subject, (bucket + 1) % @bucket_count)
-      redis.hdel(subject, (bucket + 2) % @bucket_count)
+      redis.incrby(subject, count)
       redis.expire(subject, @bucket_expiry)
     end.first
   end
@@ -59,10 +52,8 @@ class Ratelimit
     count = (interval / @bucket_interval).floor
     subject = "#{@key}:#{subject}"
 
-    keys = (0..count - 1).map do |i|
-      (bucket - i) % @bucket_count
-    end
-    return redis.hmget(subject, *keys).inject(0) {|a, i| a + i.to_i}
+    keys = (0..count - 1).map {|i| "#{subject}:#{bucket - i}" }
+    return redis.mget(*keys).inject(0) {|a, i| a + i.to_i}
   end
 
   # Check if the rate limit has been exceeded.
@@ -110,7 +101,7 @@ class Ratelimit
   private
 
   def get_bucket(time = Time.now.to_i)
-    ((time % @bucket_span) / @bucket_interval).floor
+    (time / @bucket_interval).floor
   end
 
   def redis
