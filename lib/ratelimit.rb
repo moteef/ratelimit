@@ -36,7 +36,7 @@ class Ratelimit
   # @return [Integer] The counter value
   def add(subject, count = 1)
     subject = "#{@key}:#{subject}:#{get_bucket}"
-    redis.pipelined do
+    redis.multi do
       redis.incrby(subject, count)
       redis.expire(subject, @bucket_expiry)
     end.first
