@@ -1,10 +1,27 @@
 require 'spec_helper'
 
 describe Ratelimit do
+  let(:r) { Ratelimit.new("key") }
+  let(:redis) { r.send(:with_redis) { |redis| redis } }
 
-  before do
-    @r = Ratelimit.new("key")
-    @r.send(:redis).flushdb
+  before :each do
+    @r = r
+    redis.flushdb
+  end
+
+  context 'when redis is passed as proc' do
+    let!(:r) { Ratelimit.new('key', redis: callable) }
+    let!(:redis) { Redis.new }
+    let!(:callable) do
+      ->&blk {
+        blk.yield redis
+      }
+    end
+
+    it 'returns redis in a with_redis block' do
+      expect(r.instance_variable_get(:@redis_proc)).to eq true
+      expect{ |b| r.send(:with_redis, &b) }.to yield_with_args(Redis::Namespace)
+    end
   end
 
   it "should set_bucket_expiry to the bucket_span if not defined" do

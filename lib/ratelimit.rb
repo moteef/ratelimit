@@ -26,6 +26,7 @@ class Ratelimit
       raise ArgumentError.new("Bucket expiry cannot be larger than the bucket span")
     end
     @redis = options[:redis]
+    @redis_proc = @redis.respond_to?(:to_proc)
   end
 
   # Add to the counter for a given subject.
@@ -36,10 +37,12 @@ class Ratelimit
   # @return [Integer] The counter value
   def add(subject, count = 1)
     subject = "#{@key}:#{subject}:#{get_bucket}"
-    redis.multi do
-      redis.incrby(subject, count)
-      redis.expire(subject, @bucket_expiry)
-    end.first
+    with_redis do |redis|
+      redis.multi do
+        redis.incrby(subject, count)
+        redis.expire(subject, @bucket_expiry)
+      end.first
+    end
   end
 
   # Returns the count for a given subject and interval
@@ -53,7 +56,9 @@ class Ratelimit
     subject = "#{@key}:#{subject}"
 
     keys = (0..count - 1).map {|i| "#{subject}:#{bucket - i}" }
-    return redis.mget(*keys).inject(0) {|a, i| a + i.to_i}
+    with_redis do |redis|
+      return redis.mget(*keys).inject(0) {|a, i| a + i.to_i}
+    end
   end
 
   # Check if the rate limit has been exceeded.
@@ -104,7 +109,14 @@ class Ratelimit
     (time / @bucket_interval).floor
   end
 
-  def redis
-    @redis ||= Redis::Namespace.new(:ratelimit, :redis => @redis || Redis.new)
+  def with_redis
+    if @redis_proc
+      @redis.call do |redis|
+        yield Redis::Namespace.new(:ratelimit, redis: redis)
+      end
+    else
+      @redis ||= Redis::Namespace.new(:ratelimit, :redis => @redis || Redis.new)
+      yield @redis
+    end
   end
 end
